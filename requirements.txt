@@ -1,0 +1,6 @@
+pytesseract
+opencv-python
+pandas
+pdf2image
+openpyxl
+numpy
