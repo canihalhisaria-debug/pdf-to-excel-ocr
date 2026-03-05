@@ -1,27 +1,60 @@
-import pytesseract
-import cv2
-import pandas as pd
-from pdf2image import convert_from_path
-import numpy as np
+from pathlib import Path
+from uuid import uuid4
 
-def pdf_to_excel(pdf_file):
+from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from werkzeug.utils import secure_filename
 
-    pages = convert_from_path(pdf_file)
+from converter import ConversionError, convert_file_to_excel
 
-    data = []
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+OUTPUT_DIR = BASE_DIR / "outputs"
+ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "tif", "tiff", "bmp"}
 
-    for page in pages:
-        img = cv2.cvtColor(np.array(page), cv2.COLOR_BGR2GRAY)
+UPLOAD_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
 
-        text = pytesseract.image_to_string(img)
+app = Flask(__name__)
+app.config["SECRET_KEY"] = "pdf-to-excel-ocr-secret"
 
-        rows = text.split("\n")
 
-        for row in rows:
-            cols = row.split()
-            data.append(cols)
+def is_allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-    df = pd.DataFrame(data)
-    df.to_excel("output.xlsx", index=False)
 
-pdf_to_excel("sample.pdf")
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        upload = request.files.get("file")
+
+        if upload is None or upload.filename == "":
+            flash("Please choose a PDF or image file.")
+            return redirect(url_for("index"))
+
+        if not is_allowed_file(upload.filename):
+            flash("Unsupported file type. Upload PDF or image files only.")
+            return redirect(url_for("index"))
+
+        filename = f"{uuid4().hex}_{secure_filename(upload.filename)}"
+        upload_path = UPLOAD_DIR / filename
+        upload.save(upload_path)
+
+        output_path = OUTPUT_DIR / f"{upload_path.stem}.xlsx"
+
+        try:
+            result = convert_file_to_excel(upload_path, output_path)
+        except ConversionError as exc:
+            flash(f"Conversion failed: {exc}")
+            return redirect(url_for("index"))
+
+        return send_file(
+            output_path,
+            as_attachment=True,
+            download_name=f"{Path(result['source_file']).stem}.xlsx",
+        )
+
+    return render_template("index.html")
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
